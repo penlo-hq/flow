@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var audioEngine = AudioEngineManager()
     @State private var briefingScheduler = BriefingScheduler()
     @State private var brainSyncer = EnterpriseBrainSyncer()
+    @StateObject private var dispatchService = DispatchService()
 
     @Environment(\.modelContext) private var modelContext
 
@@ -25,6 +26,7 @@ struct ContentView: View {
     @State private var dragOffset: CGFloat = 0
     @State private var showSettings = false
     @State private var selectedFolder: VaultFolder?
+    @State private var showDispatches = false
 
     private let openWidth: CGFloat = Metrics.drawerWidth
 
@@ -72,7 +74,14 @@ struct ContentView: View {
                 onConversationTap: { archived in
                     chatVM.restoreConversation(archived)
                     closeDrawer()
-                }
+                },
+                onDispatchTap: {
+                    closeDrawer()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        showDispatches = true
+                    }
+                },
+                dispatchBadge: dispatchService.pendingCount
             )
             .offset(x: drawerSlide)
             .opacity(0.6 + (progress * 0.4))
@@ -101,6 +110,20 @@ struct ContentView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showDispatches) {
+            DispatchView(service: dispatchService)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openDispatch)) { _ in
+            showDispatches = true
+        }
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
+            // DispatchView polls at 5s while open; only top up the badge here
+            // when the sheet is closed.
+            guard !showDispatches else { return }
+            Task { await dispatchService.fetchCards() }
+        }
         .onAppear {
             bluetooth.onStateChange = { [appState] wearableState in
                 appState.handleWearableStateChange(wearableState)
@@ -117,6 +140,7 @@ struct ContentView: View {
             brainSyncer.configure(modelContainer: modelContext.container)
             brainSyncer.drainQueue(modelContext: modelContext)
             PenloStore.seedDemoTranscripts(in: modelContext)
+            Task { await dispatchService.fetchCards() }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             brainSyncer.drainQueue(modelContext: modelContext)
@@ -188,6 +212,13 @@ struct ContentView: View {
                 }
             }
     }
+}
+
+// Defined locally for now. Sanjoy's `feat/apns-push` PR also declares this name
+// in `AppDelegate.swift`; the duplicate resolves to a single definition once both
+// PRs merge (`Notification.Name` values are compared by their raw string).
+extension Notification.Name {
+    static let openDispatch = Notification.Name("com.getflow.flow.openDispatch")
 }
 
 #Preview("Dark") {

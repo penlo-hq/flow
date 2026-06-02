@@ -16,12 +16,18 @@ struct DrawerMenu: View {
     let onSettingsTap: () -> Void
     let onNewChat: () -> Void
     let onConversationTap: (ArchivedConversation) -> Void
+    let onDispatchTap: () -> Void
+    let dispatchBadge: Int   // pending dispatch count; 0 hides the badge
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             profileCard
 
             newChatButton
+
+            Divider().overlay(Color.textSecondary.opacity(0.15))
+
+            dispatchesButton()
 
             Divider().overlay(Color.textSecondary.opacity(0.15))
 
@@ -100,6 +106,41 @@ struct DrawerMenu: View {
             .foregroundStyle(Color.textPrimary)
             .padding(.horizontal, Metrics.screenPadding)
             .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Dispatches
+
+    private func dispatchesButton() -> some View {
+        Button {
+            Haptics.light()
+            onDispatchTap()
+        } label: {
+            HStack(spacing: 14) {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "bolt.circle")
+                        .font(.body)
+                        .foregroundStyle(Color.royalBlue)
+                        .frame(width: 22)
+                    if dispatchBadge > 0 {
+                        Text("\(min(dispatchBadge, 99))")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(3)
+                            .background(.red)
+                            .clipShape(Circle())
+                            .offset(x: 8, y: -8)
+                    }
+                }
+                Text("Dispatches")
+                    .font(.body)
+                    .foregroundStyle(Color.textPrimary)
+                Spacer()
+            }
+            .padding(.horizontal, Metrics.screenPadding)
+            .padding(.vertical, 10)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -241,7 +282,9 @@ enum VaultFolder: String, CaseIterable, Identifiable {
             onFolderTap: { _ in },
             onSettingsTap: {},
             onNewChat: {},
-            onConversationTap: { _ in }
+            onConversationTap: { _ in },
+            onDispatchTap: {},
+            dispatchBadge: 0
         )
         Spacer()
     }
