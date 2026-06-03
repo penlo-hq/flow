@@ -2,31 +2,26 @@
 //  NotificationManager.swift
 //  flow
 //
-//  Schedules local push notifications 15 minutes before each upcoming
-//  calendar event. On every refresh cycle the manager removes ALL
-//  previously pending Penlo briefing notifications before scheduling
-//  the current set — this prevents stale or duplicated alerts when
-//  events change or are cancelled.
-//
 
 import EventKit
+import UIKit
 import UserNotifications
 
 @MainActor
 final class NotificationManager {
 
-    // MARK: - Constants
+    static let shared = NotificationManager()
 
-    /// All Penlo briefing notifications share this category so they can
-    /// be bulk-removed on the next refresh.
-    private static let categoryID = "com.getflow.flow.briefing"
+    enum Category {
+        static let briefing = "com.getflow.flow.briefing"
+        static let dispatch = "com.getflow.flow.dispatch"
+        static let sync = "com.getflow.flow.sync"
+        static let auth = "com.getflow.flow.auth"
+    }
 
-    /// How many minutes before the meeting to fire the notification.
     private static let leadTimeMinutes = 15
+    private static let briefingCacheKey = "com.getflow.flow.briefingCache"
 
-    // MARK: - Authorization
-
-    /// Request notification permission. Returns `true` when granted.
     func requestAuthorization() async -> Bool {
         let center = UNUserNotificationCenter.current()
         do {
@@ -37,65 +32,152 @@ final class NotificationManager {
         }
     }
 
-    // MARK: - Schedule
+    // MARK: - Briefing cache
 
-    /// Full refresh: remove stale notifications, then schedule a new
-    /// 15-minute-ahead alert for every event whose trigger time is
-    /// still in the future.
+    func cacheBriefingSummary(eventID: String, summary: String) {
+        var cache = UserDefaults.standard.dictionary(forKey: Self.briefingCacheKey) as? [String: String] ?? [:]
+        cache[eventID] = String(summary.prefix(280))
+        UserDefaults.standard.set(cache, forKey: Self.briefingCacheKey)
+    }
+
+    private func cachedSummary(for eventID: String) -> String? {
+        let cache = UserDefaults.standard.dictionary(forKey: Self.briefingCacheKey) as? [String: String]
+        return cache?[eventID]
+    }
+
+    // MARK: - Calendar briefing reminders
+
     func refreshNotifications(for events: [EKEvent]) async {
         let center = UNUserNotificationCenter.current()
-
-        // 1. Remove all pending Penlo briefing notifications.
         let pending = await center.pendingNotificationRequests()
         let penloIDs = pending
-            .filter { $0.content.categoryIdentifier == Self.categoryID }
+            .filter { $0.content.categoryIdentifier == Category.briefing }
             .map(\.identifier)
         if !penloIDs.isEmpty {
             center.removePendingNotificationRequests(withIdentifiers: penloIDs)
-            log("Removed \(penloIDs.count) stale notifications")
         }
 
-        // 2. Schedule fresh notifications for events that haven't passed.
         let now = Date.now
         var scheduled = 0
-
         for event in events {
-            guard let fireDate = Calendar.current.date(
-                byAdding: .minute,
-                value: -Self.leadTimeMinutes,
-                to: event.startDate
-            ) else { continue }
-
-            // Only schedule if the trigger time is still in the future.
+            guard let fireDate = Calendar.current.date(byAdding: .minute, value: -Self.leadTimeMinutes, to: event.startDate) else { continue }
             guard fireDate > now else { continue }
+
+            let eventID = event.eventIdentifier ?? UUID().uuidString
+            let title = event.title ?? "Upcoming meeting"
+            var body = cachedSummary(for: eventID) ?? "Your briefing is ready — tap to open Penlo"
+            if body.isEmpty { body = "Meeting in \(Self.leadTimeMinutes) minutes" }
 
             let content = UNMutableNotificationContent()
             content.title = "Meeting in \(Self.leadTimeMinutes)m"
-            content.body = event.title ?? "Upcoming meeting"
+            content.body = body
             content.sound = .default
-            content.categoryIdentifier = Self.categoryID
+            content.categoryIdentifier = Category.briefing
+            content.userInfo = ["event_id": eventID, "meeting_title": title]
 
-            let components = Calendar.current.dateComponents(
-                [.year, .month, .day, .hour, .minute, .second],
-                from: fireDate
-            )
+            let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: fireDate)
             let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
-
-            let id = "\(Self.categoryID).\(event.eventIdentifier ?? UUID().uuidString)"
+            let id = "\(Category.briefing).\(eventID)"
             let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-
             do {
                 try await center.add(request)
                 scheduled += 1
             } catch {
-                log("Failed to schedule notification for '\(event.title ?? "?")': \(error.localizedDescription)")
+                log("Failed to schedule briefing: \(error.localizedDescription)")
             }
         }
-
         log("Scheduled \(scheduled) briefing notifications")
     }
 
-    // MARK: - Helpers
+    // MARK: - Immediate local alerts
+
+    func notifyDispatchPending(count: Int, featureLabel: String?, dispatchId: String? = nil) {
+        guard !UserDefaults.standard.bool(forKey: "com.getflow.flow.remotePushRegistered") else { return }
+        guard UIApplication.shared.applicationState != .active else { return }
+        let body = featureLabel.map { "\($0) — approve or queue" } ?? "\(count) dispatch\(count == 1 ? "" : "es") awaiting approval"
+        var userInfo: [String: Any] = ["route": "dispatch"]
+        if let dispatchId {
+            userInfo["dispatch_id"] = dispatchId
+        }
+        postImmediate(
+            id: "dispatch.pending.\(Date().timeIntervalSince1970)",
+            title: "New dispatch",
+            body: body,
+            category: Category.dispatch,
+            userInfo: userInfo
+        )
+    }
+
+    func notifyDispatchComplete(featureLabel: String, prURL: String?) {
+        guard UIApplication.shared.applicationState != .active else { return }
+        var body = "Build finished for \(featureLabel)"
+        if let prURL { body += " — \(prURL)" }
+        postImmediate(
+            id: "dispatch.complete.\(featureLabel)",
+            title: "Dispatch complete",
+            body: body,
+            category: Category.dispatch,
+            userInfo: ["route": "dispatch"]
+        )
+    }
+
+    func notifyDispatchFailed(featureLabel: String, error: String) {
+        guard UIApplication.shared.applicationState != .active else { return }
+        postImmediate(
+            id: "dispatch.failed.\(featureLabel)",
+            title: "Dispatch failed",
+            body: "\(featureLabel): \(error.prefix(200))",
+            category: Category.dispatch,
+            userInfo: ["route": "dispatch"]
+        )
+    }
+
+    func notifySyncFailed(detail: String) {
+        postImmediate(
+            id: "sync.failed",
+            title: "Brain sync failed",
+            body: detail,
+            category: Category.sync,
+            userInfo: [:]
+        )
+    }
+
+    func notifyAuthExpired() {
+        postImmediate(
+            id: "auth.expired",
+            title: "Brain authentication expired",
+            body: "Update your API key in Settings",
+            category: Category.auth,
+            userInfo: [:]
+        )
+    }
+
+    private func postImmediate(
+        id: String,
+        title: String,
+        body: String,
+        category: String,
+        userInfo: [String: Any]
+    ) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.categoryIdentifier = category
+        content.userInfo = userInfo
+        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                Task { @MainActor in
+                    NotificationManager.shared.logImmediateFailure(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    fileprivate func logImmediateFailure(_ message: String) {
+        log(message)
+    }
 
     private func log(_ message: String) {
         #if DEBUG

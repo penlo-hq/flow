@@ -88,8 +88,10 @@ MAX_TOKENS = 4000
 TEMPERATURE = 0.0  # Deterministic, strict factual extraction.
 
 # Enterprise Brain ingestion endpoint (Milestone 3).
-ENTERPRISE_BRAIN_URL = (
-    "https://penlo-enteprisebrain-production.up.railway.app/api/v1/ingest/penlo-brain"
+# Override via PENLO_BRAIN_INGEST_URL in .env (see .env.example).
+ENTERPRISE_BRAIN_URL = os.environ.get(
+    "PENLO_BRAIN_INGEST_URL",
+    "http://localhost:8000/api/v1/ingest/penlo-brain",
 )
 HTTP_TIMEOUT_SECONDS = 15
 # Mandatory exponential backoff schedule (seconds) applied on HTTP 429.

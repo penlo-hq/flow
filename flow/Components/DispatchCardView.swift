@@ -11,6 +11,7 @@ import SwiftUI
 
 struct DispatchCardView: View {
     let card: DispatchCard
+    let showAutoBuild: Bool
     let onApprove: (String) -> Void   // "auto" or "mcp"
     let onDiscard: () -> Void
     let onRetryAsQueue: () -> Void
@@ -110,18 +111,20 @@ struct DispatchCardView: View {
 
     private var pendingButtons: some View {
         HStack(spacing: 8) {
-            actionButton(
-                label: "Auto-build",
-                icon: "bolt.fill",
-                highlighted: primaryHighlight == "simple" || primaryHighlight == nil
-            ) {
-                onApprove("auto")
+            if showAutoBuild {
+                actionButton(
+                    label: "Auto-build",
+                    icon: "bolt.fill",
+                    highlighted: primaryHighlight == "simple" || primaryHighlight == nil
+                ) {
+                    onApprove("auto")
+                }
             }
 
             actionButton(
                 label: "Queue",
                 icon: "tray.and.arrow.down",
-                highlighted: primaryHighlight == "complex"
+                highlighted: !showAutoBuild || primaryHighlight == "complex"
             ) {
                 onApprove("mcp")
             }

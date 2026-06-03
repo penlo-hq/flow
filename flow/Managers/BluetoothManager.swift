@@ -23,6 +23,7 @@ enum PenloBLE: Sendable {
     nonisolated(unsafe) static let serviceUUID   = CBUUID(string: "00010000-7365-6E6C-6F2D-70656E6C6F00")
     nonisolated(unsafe) static let audioCharUUID = CBUUID(string: "00010001-7365-6E6C-6F2D-70656E6C6F00")
     nonisolated(unsafe) static let dataCharUUID  = CBUUID(string: "00010002-7365-6E6C-6F2D-70656E6C6F00")
+    nonisolated(unsafe) static let buttonCharUUID = CBUUID(string: "00010003-7365-6E6C-6F2D-70656E6C6F00")
     /// Passed to `CBCentralManager(delegate:queue:options:)` so iOS can
     /// wake the app in the background and call `willRestoreState`.
     static let restoreID = "com.getflow.flow.ble-central"
@@ -47,6 +48,12 @@ final class BluetoothManager: NSObject, ObservableObject {
 
     /// Callback the owner can set so `AppStateManager` gets notified.
     var onStateChange: ((WearableState) -> Void)?
+
+    /// Invoked on `bleQueue` when PCM audio packets arrive — must not block.
+    nonisolated(unsafe) var onHardwareAudio: (@Sendable (Data) -> Void)?
+
+    /// Invoked on the main actor when the wearable button characteristic fires.
+    nonisolated(unsafe) var onHardwareAction: (@Sendable () -> Void)?
 
     // MARK: Private BLE
 
@@ -297,7 +304,7 @@ extension BluetoothManager: CBPeripheralDelegate {
     ) {
         guard let service = peripheral.services?.first(where: { $0.uuid == PenloBLE.serviceUUID }) else { return }
         peripheral.discoverCharacteristics(
-            [PenloBLE.audioCharUUID, PenloBLE.dataCharUUID],
+            [PenloBLE.audioCharUUID, PenloBLE.dataCharUUID, PenloBLE.buttonCharUUID],
             for: service
         )
         Task { @MainActor [weak self] in
@@ -328,14 +335,24 @@ extension BluetoothManager: CBPeripheralDelegate {
         didUpdateValueFor characteristic: CBCharacteristic,
         error: (any Error)?
     ) {
-        guard let data = characteristic.value else { return }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            if characteristic.uuid == PenloBLE.dataCharUUID, let first = data.first {
-                self.batteryLevel = Int(first)
-                self.log("Battery update: \(first)%")
+        guard error == nil, let data = characteristic.value, !data.isEmpty else { return }
+
+        switch characteristic.uuid {
+        case PenloBLE.audioCharUUID:
+            onHardwareAudio?(data)
+        case PenloBLE.buttonCharUUID:
+            Task { @MainActor in
+                onHardwareAction?()
             }
-            self.log("Received \(data.count) bytes on \(characteristic.uuid)")
+        case PenloBLE.dataCharUUID:
+            let level = data.first.map { Int($0) }
+            Task { @MainActor [weak self] in
+                guard let self, let level else { return }
+                self.batteryLevel = level
+                self.log("Battery update: \(level)%")
+            }
+        default:
+            break
         }
     }
 }

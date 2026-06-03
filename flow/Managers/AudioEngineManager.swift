@@ -17,6 +17,11 @@ import AVFoundation
 import Speech
 import SwiftData
 
+enum AudioSource: Sendable {
+    case internalMic
+    case hardwareBLE
+}
+
 @MainActor
 final class AudioEngineManager {
 
@@ -29,6 +34,15 @@ final class AudioEngineManager {
     /// Maximum continuous listening duration (battery protection).
     /// After this many seconds with no speech at all, the pipeline auto-stops.
     private static let maxIdleDuration: TimeInterval = 120.0
+
+    private nonisolated(unsafe) static let hardwareFormat = AVAudioFormat(
+        commonFormat: .pcmFormatInt16,
+        sampleRate: 16000,
+        channels: 1,
+        interleaved: false
+    )!
+
+    static let hardwareActionFlag = " [HARDWARE_ACTION_FLAG] "
 
     // MARK: - Callbacks
 
@@ -52,13 +66,23 @@ final class AudioEngineManager {
     // MARK: - Public Read-Only State
 
     private(set) var isTranscribing = false
+    private(set) var currentSource: AudioSource = .internalMic
+
+    /// Whether the AVAudioEngine input tap is active (internal mic path only).
+    var isInputEngineRunning: Bool { audioEngine.isRunning }
 
     // MARK: - Private Audio
 
     private let audioEngine = AVAudioEngine()
+    private nonisolated(unsafe) let hardwareAudioQueue = DispatchQueue(
+        label: "com.getflow.flow.ble-audio",
+        qos: .userInitiated
+    )
+    private nonisolated(unsafe) var activeRecognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var speechRecognizer: SFSpeechRecognizer?
+    private var inputTapInstalled = false
 
     // MARK: - Private Segmentation
 
@@ -121,11 +145,25 @@ final class AudioEngineManager {
         return micGranted && speechGranted
     }
 
+    /// Speech recognition only — used for the Penlo wearable BLE path.
+    func requestSpeechPermission() async -> Bool {
+        let speechStatus = await withCheckedContinuation { cont in
+            SFSpeechRecognizer.requestAuthorization { status in
+                cont.resume(returning: status)
+            }
+        }
+        let speechGranted = (speechStatus == .authorized)
+        if !speechGranted {
+            log("Speech recognition permission denied (status: \(speechStatus.rawValue))")
+            onFault?("Speech recognition permission denied.")
+        }
+        return speechGranted
+    }
+
     // MARK: - Start / Stop
 
-    /// Begin the transcription pipeline. Audio flows from AVAudioEngine
-    /// into SFSpeechRecognizer; silence detection runs in parallel.
-    func startTranscribing() {
+    /// Begin the transcription pipeline from the iPhone mic or Penlo wearable BLE stream.
+    func startTranscribing(source: AudioSource = .internalMic) {
         guard !isTranscribing else { return }
 
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")),
@@ -136,15 +174,18 @@ final class AudioEngineManager {
         }
         speechRecognizer = recognizer
         recognizer.supportsOnDeviceRecognition = true
+        currentSource = source
 
         do {
-            try configureAudioSession()
-            try startAudioEngine()
+            try configureAudioSession(for: source)
+            if source == .internalMic {
+                try startAudioEngine()
+            }
             startRecognitionTask(with: recognizer)
             hasDetectedSpeech = false
             startIdleTimer()
             setTranscribing(true)
-            log("Pipeline started — listening and transcribing")
+            log("Pipeline started — source: \(source == .internalMic ? "iPhone mic" : "Penlo wearable BLE")")
         } catch {
             log("Failed to start audio pipeline: \(error.localizedDescription)")
             onFault?("Audio pipeline failed: \(error.localizedDescription)")
@@ -161,19 +202,57 @@ final class AudioEngineManager {
         log("Pipeline stopped")
     }
 
-    // MARK: - Simulate BLE Audio
+    // MARK: - Hardware BLE Audio
 
-    /// For development: feed a raw audio buffer (e.g. from BLE) into the
-    /// recognition pipeline without the microphone.
+    /// Append raw 16-bit PCM (16 kHz mono) from the wearable into the STT pipeline.
+    nonisolated func appendHardwareAudio(data: Data) {
+        hardwareAudioQueue.async {
+            guard let buffer = Self.convertToPCMBuffer(data: data) else { return }
+            self.activeRecognitionRequest?.append(buffer)
+        }
+    }
+
+    /// Inject a physical button bookmark into the live transcript for Claude extraction.
+    func injectHardwareActionFlag() {
+        guard isTranscribing else { return }
+        currentBlockText += Self.hardwareActionFlag
+        lastPartialText += Self.hardwareActionFlag
+        onPartialResult?(currentBlockText)
+    }
+
+    /// Convert wearable PCM bytes into an `AVAudioPCMBuffer` for Speech framework ingestion.
+    nonisolated static func convertToPCMBuffer(data: Data) -> AVAudioPCMBuffer? {
+        let format = hardwareFormat
+        let bytesPerFrame = format.streamDescription.pointee.mBytesPerFrame
+        guard bytesPerFrame > 0 else { return nil }
+        let frameCapacity = UInt32(data.count) / bytesPerFrame
+        guard frameCapacity > 0 else { return nil }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCapacity) else { return nil }
+        guard let channelData = buffer.int16ChannelData else { return nil }
+
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            memcpy(channelData[0], base, Int(frameCapacity) * Int(bytesPerFrame))
+        }
+        buffer.frameLength = frameCapacity
+        return buffer
+    }
+
+    /// For development/simulators: feed a pre-built buffer into the recognition pipeline.
     func feedAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+        activeRecognitionRequest?.append(buffer)
         recognitionRequest?.append(buffer)
     }
 
     // MARK: - Audio Session
 
-    private func configureAudioSession() throws {
+    private func configureAudioSession(for source: AudioSource) throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+        if source == .internalMic {
+            try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+        } else {
+            try session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .allowBluetooth])
+        }
         try session.setActive(true, options: .notifyOthersOnDeactivation)
     }
 
@@ -184,8 +263,9 @@ final class AudioEngineManager {
         let format = inputNode.outputFormat(forBus: 0)
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            self?.recognitionRequest?.append(buffer)
+            self?.activeRecognitionRequest?.append(buffer)
         }
+        inputTapInstalled = true
 
         audioEngine.prepare()
         try audioEngine.start()
@@ -199,6 +279,7 @@ final class AudioEngineManager {
         request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
 
         recognitionRequest = request
+        activeRecognitionRequest = request
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor [weak self] in
@@ -323,6 +404,7 @@ final class AudioEngineManager {
         recognitionTask = nil
         recognitionRequest?.endAudio()
         recognitionRequest = nil
+        activeRecognitionRequest = nil
 
         guard let recognizer = speechRecognizer, recognizer.isAvailable, isTranscribing else { return }
 
@@ -330,6 +412,7 @@ final class AudioEngineManager {
         request.shouldReportPartialResults = true
         request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
         recognitionRequest = request
+        activeRecognitionRequest = request
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor [weak self] in
@@ -363,8 +446,12 @@ final class AudioEngineManager {
         recognitionTask = nil
         recognitionRequest?.endAudio()
         recognitionRequest = nil
+        activeRecognitionRequest = nil
 
-        audioEngine.inputNode.removeTap(onBus: 0)
+        if inputTapInstalled {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            inputTapInstalled = false
+        }
         if audioEngine.isRunning { audioEngine.stop() }
 
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)

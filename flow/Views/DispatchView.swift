@@ -32,26 +32,58 @@ struct DispatchView: View {
     }
 
     private var cardList: some View {
-        ScrollView {
-            LazyVStack(spacing: 10) {
-                ForEach(service.cards) { card in
-                    DispatchCardView(
-                        card: card,
-                        onApprove: { mode in
-                            Task { await service.approve(id: card.id, mode: mode) }
-                        },
-                        onDiscard: {
-                            Task { await service.discard(id: card.id) }
-                        },
-                        onRetryAsQueue: {
-                            Task { await service.approve(id: card.id, mode: "mcp") }
-                        }
-                    )
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    if let err = service.lastActionError {
+                        Text(err)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, Metrics.screenPadding)
+                    }
+                    ForEach(service.cards) { card in
+                        DispatchCardView(
+                            card: card,
+                            showAutoBuild: service.executorEnabled,
+                            onApprove: { mode in
+                                Task { await service.approve(id: card.id, mode: mode) }
+                            },
+                            onDiscard: {
+                                Task { await service.discard(id: card.id) }
+                            },
+                            onRetryAsQueue: {
+                                Task { await service.approve(id: card.id, mode: "mcp") }
+                            }
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(
+                                    service.highlightDispatchId == card.id.uuidString.lowercased()
+                                        ? Color.royalBlue : Color.clear,
+                                    lineWidth: 2
+                                )
+                        )
+                        .id(card.id.uuidString.lowercased())
+                    }
+                }
+                .padding(Metrics.screenPadding)
+            }
+            .background(Color.canvas)
+            .onChange(of: service.highlightDispatchId) { _, newId in
+                guard let newId else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation {
+                        proxy.scrollTo(newId, anchor: .center)
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    if service.highlightDispatchId == newId {
+                        service.highlightDispatchId = nil
+                    }
                 }
             }
-            .padding(Metrics.screenPadding)
         }
-        .background(Color.canvas)
     }
 
     private var emptyState: some View {

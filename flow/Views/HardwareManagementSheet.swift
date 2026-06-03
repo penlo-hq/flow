@@ -8,6 +8,7 @@
 
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct HardwareManagementSheet: View {
     @ObservedObject var bluetooth: BluetoothManager
@@ -22,8 +23,6 @@ struct HardwareManagementSheet: View {
     @State private var brainURL: String = ""
     @State private var brainKey: String = ""
     @State private var userEmail: String = ""
-    @State private var aggressiveBackgroundSync = false
-    @State private var wifiOnlySync = true
     @State private var verifyState: VerifyState = .idle
     @State private var brainTestState: BrainTestState = .idle
 
@@ -49,8 +48,8 @@ struct HardwareManagementSheet: View {
                 authSection
                 accountSection
                 enterpriseBrainSection
+                notificationsSection
                 queueSection
-                batterySection
             }
             .scrollContentBackground(.hidden)
             .background(Color.canvas.ignoresSafeArea())
@@ -327,6 +326,23 @@ struct HardwareManagementSheet: View {
         }
     }
 
+    // MARK: Notifications
+
+    private var notificationsSection: some View {
+        Section {
+            Text("Local alerts fire for new dispatches, sync failures, and meeting briefings when Penlo is in the background.")
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+            Button("Open notification permissions") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+        } header: {
+            Text("Notifications")
+        }
+    }
+
     // MARK: Queue
 
     private var queueSection: some View {
@@ -341,10 +357,10 @@ struct HardwareManagementSheet: View {
             }
 
             Button {
-                syncAllTranscripts()
+                markQueueReviewedLocally()
             } label: {
                 HStack {
-                    Text(bluetooth.isSyncing ? "Syncing…" : "Sync Now")
+                    Text("Mark All Reviewed Locally")
                     if bluetooth.isSyncing {
                         Spacer()
                         ProgressView().tint(.royalBlue)
@@ -356,10 +372,12 @@ struct HardwareManagementSheet: View {
             .disabled(unsyncedTranscripts.isEmpty || bluetooth.isSyncing)
         } header: {
             Text("Queue Status")
+        } footer: {
+            Text("To upload memories to Enterprise Brain, approve items in Review Memories (Staging Vault). This button only clears the local unsynced flag.")
         }
     }
 
-    private func syncAllTranscripts() {
+    private func markQueueReviewedLocally() {
         let context = modelContext
         let transcriptsToSync = unsyncedTranscripts
         bluetooth.syncAll {
@@ -370,19 +388,6 @@ struct HardwareManagementSheet: View {
                 }
                 try? context.save()
             }
-        }
-    }
-
-    // MARK: Battery Optimization
-
-    private var batterySection: some View {
-        Section {
-            Toggle("Aggressive Background Sync", isOn: $aggressiveBackgroundSync)
-            Toggle("Wi-Fi Only Sync", isOn: $wifiOnlySync)
-        } header: {
-            Text("Battery Optimization")
-        } footer: {
-            Text("Wi-Fi-only sync preserves battery; aggressive background sync keeps your Enterprise Brain up to date in real time.")
         }
     }
 
@@ -411,6 +416,8 @@ struct HardwareManagementSheet: View {
             KeychainStore.saveBrainURL(trimmedURL)
         }
         KeychainStore.saveBrainKey(brainKey.trimmingCharacters(in: .whitespacesAndNewlines))
+
+        NotificationCenter.default.post(name: .brainCredentialsSaved, object: nil)
 
         // Save user email
         KeychainStore.saveUserEmail(userEmail.trimmingCharacters(in: .whitespacesAndNewlines))

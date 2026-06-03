@@ -459,8 +459,14 @@ final class EnterpriseBrainSyncer {
         switch result.status {
         case .authFailed:
             authError = "Enterprise Brain API key is invalid. Please update in Settings."
+            Task { @MainActor in
+                NotificationManager.shared.notifyAuthExpired()
+            }
         case .clientError, .validationError:
             logToFile("PERMANENT FAIL [\(result.status.rawValue)] transcript=\(transcriptID.uuidString.prefix(8)): \(result.detail)")
+            Task { @MainActor in
+                NotificationManager.shared.notifySyncFailed(detail: result.detail)
+            }
         case .serverError, .rateLimited, .networkError:
             logToFile("RETRYABLE [\(result.status.rawValue)] transcript=\(transcriptID.uuidString.prefix(8)): \(result.detail)")
         default:

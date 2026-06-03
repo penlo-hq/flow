@@ -7,6 +7,7 @@
 //  ChatViewModel, and AudioEngineManager.
 //
 
+import Combine
 import SwiftData
 import SwiftUI
 import UIKit
@@ -115,8 +116,25 @@ struct ContentView: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .openDispatch)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .openDispatch)) { note in
             showDispatches = true
+            if let id = note.userInfo?["dispatch_id"] as? String {
+                dispatchService.highlightDispatchId = id.lowercased()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openBriefing)) { _ in
+            briefingScheduler.start()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
+            showSettings = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .brainCredentialsSaved)) { _ in
+            Task {
+                await PushRegistrationService.registerCachedTokenIfPossible()
+                await MainActor.run {
+                    UIApplication.shared.registerForRemoteNotifications()
+                }
+            }
         }
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
             // DispatchView polls at 5s while open; only top up the badge here
@@ -133,6 +151,12 @@ struct ContentView: View {
             )
             audioEngine.onTranscribingChange = { [appState] isActive in
                 appState.handleTranscribingChange(isActive)
+            }
+            bluetooth.onHardwareAudio = { [audioEngine] data in
+                audioEngine.appendHardwareAudio(data: data)
+            }
+            bluetooth.onHardwareAction = { [audioEngine] in
+                audioEngine.injectHardwareActionFlag()
             }
             chatVM.modelContext = modelContext
             briefingScheduler.configure(chatVM: chatVM, modelContext: modelContext)
@@ -214,12 +238,6 @@ struct ContentView: View {
     }
 }
 
-// Defined locally for now. Sanjoy's `feat/apns-push` PR also declares this name
-// in `AppDelegate.swift`; the duplicate resolves to a single definition once both
-// PRs merge (`Notification.Name` values are compared by their raw string).
-extension Notification.Name {
-    static let openDispatch = Notification.Name("com.getflow.flow.openDispatch")
-}
 
 #Preview("Dark") {
     ContentView()

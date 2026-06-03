@@ -34,6 +34,7 @@ struct HomeChatView: View {
     @State private var inputFocusTrigger = 0
     @State private var isListening = false
     @State private var partialTranscript = ""
+    @State private var listeningSourceLabel = "iPhone mic"
 
     private var keyboardPadding: CGFloat {
         guard keyboardHeight > 0 else { return 0 }
@@ -53,7 +54,7 @@ struct HomeChatView: View {
                 chatStream
             }
 
-            if isListening && !partialTranscript.isEmpty {
+            if isListening {
                 listeningBanner
             }
 
@@ -306,11 +307,16 @@ struct HomeChatView: View {
                 .frame(width: 8, height: 8)
                 .opacity(isListening ? 1 : 0.3)
 
-            Text(partialTranscript)
-                .font(.caption)
-                .foregroundStyle(Color.textSecondary)
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(listeningSourceLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.royalBlue)
+                Text(partialTranscript.isEmpty ? "Listening…" : partialTranscript)
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, Metrics.screenPadding + 8)
         .padding(.vertical, 6)
@@ -330,7 +336,15 @@ struct HomeChatView: View {
 
     private func startListening() {
         Task {
-            let granted = await audioEngine.requestPermissions()
+            let source: AudioSource = bluetooth.state.isLive ? .hardwareBLE : .internalMic
+            listeningSourceLabel = source == .hardwareBLE ? "Penlo wearable" : "iPhone mic"
+
+            let granted: Bool
+            if source == .hardwareBLE {
+                granted = await audioEngine.requestSpeechPermission()
+            } else {
+                granted = await audioEngine.requestPermissions()
+            }
             guard granted else {
                 showSettings = true
                 return
@@ -350,7 +364,7 @@ struct HomeChatView: View {
                 isListening = true
                 partialTranscript = ""
             }
-            audioEngine.startTranscribing()
+            audioEngine.startTranscribing(source: source)
             Haptics.success()
         }
     }
