@@ -79,81 +79,53 @@ enum PenloStore {
         }
     }
 
-    // MARK: - Demo Seeding
+    // MARK: - Onboarding sample (single labeled memory)
 
-    /// Populates SwiftData with realistic demo transcripts so the Privacy
-    /// Staging Vault has content on first launch. Idempotent via UserDefaults flag.
+    /// Creates one clearly labeled sample transcript during onboarding vault step only.
     @MainActor
-    static func seedDemoTranscripts(in context: ModelContext) {
-        let key = "penlo.vault.demo-seeded"
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
+    static func seedOnboardingSampleIfNeeded(in context: ModelContext) {
+        guard !SetupState.onboardingSampleCreated else { return }
 
-        let encoder = JSONEncoder()
-
-        let samples: [(raw: String, payload: MemoryPayload, offset: TimeInterval)] = [
-            (
-                "Reviewed the Q3 roadmap and aligned on shipping Enterprise Sync before the offsite.",
-                MemoryPayload(
-                    title: "Standup with Nolan",
-                    facts: [
-                        PenloFact(subject: "Enterprise Sync", predicate: "is shipping", object: "before offsite", confidence: 0.82, capturedAt: ""),
-                        PenloFact(subject: "BLE pairing", predicate: "has", object: "reliability issues on v2.1 firmware", confidence: 0.78, capturedAt: ""),
-                        PenloFact(subject: "Battery drain", predicate: "reported on", object: "extended recording sessions", confidence: 0.72, capturedAt: ""),
-                        PenloFact(subject: "Target date", predicate: "is", object: "July 15th", confidence: 0.80, capturedAt: "")
-                    ],
-                    people: [PenloPerson(name: "Nolan Carroll"), PenloPerson(name: "Marcus Lee")],
-                    topicSummary: ["Q3 Roadmap", "BLE Reliability"]
-                ),
-                -1_800
-            ),
-            (
-                "Discussed ingestion limits and how to batch transcripts for the Enterprise Brain.",
-                MemoryPayload(
-                    title: "Coffee Chat: Ingestion Limits",
-                    facts: [
-                        PenloFact(subject: "Transcript batching", predicate: "is needed for", object: "ingestion limits", confidence: 0.80, capturedAt: ""),
-                        PenloFact(subject: "Wi-Fi only sync", predicate: "preserves", object: "40% battery life", confidence: 0.75, capturedAt: ""),
-                        PenloFact(subject: "Current ceiling", predicate: "is", object: "500 events per hour", confidence: 0.83, capturedAt: "")
-                    ],
-                    people: [PenloPerson(name: "Priya Anand", email: nil, phone: nil, notes: "Backend lead")],
-                    topicSummary: ["Batch Ingestion", "Battery Optimization"]
-                ),
-                -7_200
-            ),
-            (
-                "Enterprise client call about SSO requirements and EU data residency.",
-                MemoryPayload(
-                    title: "Enterprise Client Call",
-                    facts: [
-                        PenloFact(subject: "Client", predicate: "needs", object: "SSO before Q4", confidence: 0.84, capturedAt: ""),
-                        PenloFact(subject: "Data residency in EU", predicate: "is", object: "a hard blocker", confidence: 0.82, capturedAt: ""),
-                        PenloFact(subject: "Trial renewal", predicate: "is in", object: "3 weeks", confidence: 0.78, capturedAt: ""),
-                        PenloFact(subject: "Competitor demo", predicate: "scheduled for", object: "next Tuesday", confidence: 0.76, capturedAt: "")
-                    ],
-                    people: [
-                        PenloPerson(name: "Marcus Lee", notes: "Account exec"),
-                        PenloPerson(name: "Sarah Chen", email: "sarah.chen@globex.com"),
-                        PenloPerson(name: "David Park")
-                    ],
-                    topicSummary: ["Enterprise Sales", "SSO Integration", "EU Compliance"]
-                ),
-                -18_000
-            )
-        ]
-
-        for sample in samples {
-            let data = try? encoder.encode(sample.payload)
-            let transcript = Transcript(
-                rawText: sample.raw,
-                capturedAt: Date.now.addingTimeInterval(sample.offset),
-                isSynced: false,
-                payloadData: data
-            )
-            context.insert(transcript)
+        let descriptor = FetchDescriptor<Transcript>(
+            predicate: #Predicate { $0.isOnboardingSample }
+        )
+        if let existing = try? context.fetch(descriptor), !existing.isEmpty {
+            SetupState.markOnboardingSampleCreated()
+            return
         }
 
+        let payload = MemoryPayload(
+            title: "Sample — onboarding",
+            facts: [
+                PenloFact(
+                    subject: "Penlo Flow",
+                    predicate: "demonstrates",
+                    object: "approve-before-sync",
+                    confidence: 0.95,
+                    capturedAt: ""
+                ),
+                PenloFact(
+                    subject: "Staging Vault",
+                    predicate: "holds",
+                    object: "memories until you approve",
+                    confidence: 0.92,
+                    capturedAt: ""
+                )
+            ],
+            people: [PenloPerson(name: "You")],
+            topicSummary: ["Onboarding", "Privacy"]
+        )
+        let data = try? JSONEncoder().encode(payload)
+        let transcript = Transcript(
+            rawText: "This is a labeled sample from onboarding — not a real meeting. Approve to practice sync, or discard to skip.",
+            capturedAt: .now,
+            isSynced: false,
+            isOnboardingSample: true,
+            payloadData: data
+        )
+        context.insert(transcript)
         try? context.save()
-        UserDefaults.standard.set(true, forKey: key)
+        SetupState.markOnboardingSampleCreated()
     }
 }
 

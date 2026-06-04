@@ -90,6 +90,16 @@ final class AppStateManager {
         state = .fault
     }
 
+    /// Clear a fault and return to idle (or restore pre-offline state when back online).
+    func clearFault() {
+        faultMessage = nil
+        if isOnline {
+            state = stateBeforeOffline == .fault ? .idle : stateBeforeOffline
+        } else {
+            state = .offline
+        }
+    }
+
     // MARK: Bluetooth Integration
 
     func handleWearableStateChange(_ wearableState: WearableState) {

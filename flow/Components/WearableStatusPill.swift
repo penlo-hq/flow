@@ -14,10 +14,33 @@ struct WearableStatusPill: View {
     @ObservedObject var bluetooth: BluetoothManager
     let unsyncedCount: Int
     var isPhoneListening: Bool = false
+    var appStateManager: AppStateManager? = nil
     let onTap: () -> Void
 
     private var hasPending: Bool { unsyncedCount > 0 }
     private var isActive: Bool { bluetooth.state.isLive || isPhoneListening }
+
+    // MARK: - Derived system status
+
+    private var systemState: AppStateManager.SystemState? {
+        appStateManager?.state
+    }
+
+    private var pillLabel: String {
+        if isPhoneListening { return "Listening" }
+        if systemState == .fault { return "Error" }
+        if systemState == .offline { return "Offline" }
+        if systemState == .syncing { return "Syncing" }
+        if let battery = bluetooth.batteryLevel { return "\(battery)%" }
+        return bluetooth.state.label
+    }
+
+    private var pillLabelColor: Color {
+        if isPhoneListening { return .red }
+        if systemState == .fault { return .orange }
+        if systemState == .offline { return Color.textSecondary }
+        return Color.textSecondary
+    }
 
     var body: some View {
         Button {
@@ -25,30 +48,12 @@ struct WearableStatusPill: View {
             onTap()
         } label: {
             HStack(spacing: 8) {
-                if isPhoneListening {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color.red)
-                        .symbolEffect(.pulse, isActive: true)
-                } else {
-                    Image(systemName: isActive ? "waveform" : "bolt.horizontal.fill")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color.textPrimary)
-                }
+                leadingIcon
+                    .font(.system(size: 10, weight: .bold))
 
-                if isPhoneListening {
-                    Text("Listening")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.red)
-                } else if let battery = bluetooth.batteryLevel {
-                    Text("\(battery)%")
-                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(Color.textSecondary)
-                } else {
-                    Text(bluetooth.state.label)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.textSecondary)
-                }
+                Text(pillLabel)
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(pillLabelColor)
 
                 statusIndicator
 
@@ -64,37 +69,66 @@ struct WearableStatusPill: View {
             .background(
                 isPhoneListening
                     ? AnyShapeStyle(Color.red.opacity(0.06))
-                    : AnyShapeStyle(.ultraThinMaterial),
+                    : systemState == .fault
+                        ? AnyShapeStyle(Color.orange.opacity(0.08))
+                        : AnyShapeStyle(.ultraThinMaterial),
                 in: Capsule()
             )
             .overlay(
                 Capsule().strokeBorder(
-                    isPhoneListening ? Color.red.opacity(0.3) : Color.textPrimary.opacity(0.06),
-                    lineWidth: isPhoneListening ? 1 : 0.5
+                    isPhoneListening
+                        ? Color.red.opacity(0.3)
+                        : systemState == .fault
+                            ? Color.orange.opacity(0.3)
+                            : Color.textPrimary.opacity(0.06),
+                    lineWidth: (isPhoneListening || systemState == .fault) ? 1 : 0.5
                 )
             )
         }
         .buttonStyle(.plain)
         .animation(.snappy(duration: 0.3), value: hasPending)
         .animation(.snappy(duration: 0.3), value: isPhoneListening)
-        .accessibilityLabel(
-            isPhoneListening
-                ? "Phone listening. \(unsyncedCount) pending."
-                : "Penlo. \(bluetooth.state.label). \(bluetooth.batteryLevel.map { "\($0) percent" } ?? "no battery info"). \(unsyncedCount) pending."
-        )
+        .accessibilityLabel(accessibilityDescription)
+    }
+
+    @ViewBuilder
+    private var leadingIcon: some View {
+        if isPhoneListening {
+            Image(systemName: "mic.fill").foregroundStyle(Color.red)
+                .symbolEffect(.pulse, isActive: true)
+        } else if systemState == .fault {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+        } else if systemState == .offline {
+            Image(systemName: "wifi.slash").foregroundStyle(Color.textSecondary)
+        } else if systemState == .syncing {
+            Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(Color.royalBlue)
+                .symbolEffect(.rotate, isActive: true)
+        } else {
+            Image(systemName: isActive ? "waveform" : "bolt.horizontal.fill")
+                .foregroundStyle(Color.textPrimary)
+        }
     }
 
     // MARK: - Status Indicator
 
     @ViewBuilder
     private var statusIndicator: some View {
-        if hasPending {
+        if systemState == .fault {
+            Circle().fill(Color.orange).frame(width: 6, height: 6)
+        } else if systemState == .offline {
+            Circle().fill(Color.textSecondary.opacity(0.5)).frame(width: 6, height: 6)
+        } else if hasPending {
             VaultPulse()
         } else {
-            Circle()
-                .fill(Color.penloWhite)
-                .frame(width: 6, height: 6)
+            Circle().fill(Color.textSecondary.opacity(0.3)).frame(width: 6, height: 6)
         }
+    }
+
+    private var accessibilityDescription: String {
+        if isPhoneListening { return "Phone listening. \(unsyncedCount) pending." }
+        if systemState == .fault { return "System error. Tap for details." }
+        if systemState == .offline { return "Offline." }
+        return "Penlo. \(bluetooth.state.label). \(unsyncedCount) pending."
     }
 }
 

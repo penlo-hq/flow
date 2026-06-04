@@ -71,7 +71,11 @@ final class ChatViewModel {
     /// Restore a previously archived conversation.
     func restoreConversation(_ archived: ArchivedConversation) {
         archiveCurrentConversation()
-        messages = archived.messages
+        messages = archived.messages.map { msg in
+            var copy = msg
+            copy.shouldAnimateTyping = false
+            return copy
+        }
         conversationID = archived.id
         isThinking = false
         Haptics.light()

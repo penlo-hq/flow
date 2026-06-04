@@ -20,8 +20,10 @@ struct HomeChatView: View {
     var chatVM: ChatViewModel
     var audioEngine: AudioEngineManager
     var brainSyncer: EnterpriseBrainSyncer
+    var appStateManager: AppStateManager? = nil
     let onMenuTap: () -> Void
     let onNewChat: () -> Void
+    var onSetupGuide: (() -> Void)? = nil
 
     @Query(filter: #Predicate<Transcript> { !$0.isSynced })
     private var unsyncedTranscripts: [Transcript]
@@ -34,6 +36,7 @@ struct HomeChatView: View {
     @State private var inputFocusTrigger = 0
     @State private var isListening = false
     @State private var partialTranscript = ""
+    @State private var listeningSourceLabel = "iPhone mic"
 
     private var keyboardPadding: CGFloat {
         guard keyboardHeight > 0 else { return 0 }
@@ -53,7 +56,7 @@ struct HomeChatView: View {
                 chatStream
             }
 
-            if isListening && !partialTranscript.isEmpty {
+            if isListening {
                 listeningBanner
             }
 
@@ -91,6 +94,11 @@ struct HomeChatView: View {
         .sheet(isPresented: $showSettings) {
             HardwareManagementSheet(bluetooth: bluetooth, brainSyncer: brainSyncer)
         }
+        .onChange(of: showSettings) { _, isOpen in
+            if !isOpen, appStateManager?.state == .fault {
+                appStateManager?.clearFault()
+            }
+        }
         .sheet(isPresented: $showVault) {
             StagingVaultSheet(brainSyncer: brainSyncer)
                 .presentationDetents([.medium, .large])
@@ -118,10 +126,14 @@ struct HomeChatView: View {
             WearableStatusPill(
                 bluetooth: bluetooth,
                 unsyncedCount: unsyncedTranscripts.count,
-                isPhoneListening: isListening
+                isPhoneListening: isListening,
+                appStateManager: appStateManager
             ) {
                 if isListening {
                     stopListening()
+                } else if appStateManager?.state == .fault {
+                    appStateManager?.clearFault()
+                    showSettings = true
                 } else if unsyncedTranscripts.isEmpty {
                     showSettings = true
                 } else {
@@ -160,7 +172,17 @@ struct HomeChatView: View {
                 .foregroundStyle(Color.textSecondary)
                 .multilineTextAlignment(.center)
 
-            if !ClaudeService.hasAPIKey {
+            if appStateManager?.state == .fault, let fault = appStateManager?.faultMessage {
+                faultBanner(message: fault)
+            } else if SetupState.isOnboardingComplete, let onSetupGuide {
+                SetupProgressBanner(onTap: onSetupGuide)
+            } else if !brainSyncer.isConfigured && !unsyncedTranscripts.isEmpty {
+                brainSetupBanner
+            }
+
+            if !SetupState.isOnboardingComplete {
+                EmptyView()
+            } else if !ClaudeService.hasAPIKey {
                 apiKeyBanner
             } else if bluetooth.state == .disconnected && !isListening {
                 VStack(spacing: 12) {
@@ -221,11 +243,17 @@ struct HomeChatView: View {
     }
 
     private var emptyStateMessage: String {
+        if appStateManager?.state == .fault {
+            return "Something needs your attention."
+        }
         if !ClaudeService.hasAPIKey {
             return "Welcome to Penlo."
         }
         if isListening {
             return "Listening via phone mic..."
+        }
+        if !unsyncedTranscripts.isEmpty {
+            return "Memories ready for review."
         }
         switch bluetooth.state {
         case .recording:    return "Listening..."
@@ -235,6 +263,72 @@ struct HomeChatView: View {
         }
     }
 
+    private func faultBanner(message: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("Audio setup issue")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.textPrimary)
+            }
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                Button {
+                    appStateManager?.clearFault()
+                    showSettings = true
+                } label: {
+                    Text("Open Settings")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.royalBlue)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    appStateManager?.clearFault()
+                } label: {
+                    Text("Dismiss")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.textSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal, 24)
+    }
+
+    private var brainSetupBanner: some View {
+        Button {
+            showSettings = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "link")
+                    .foregroundStyle(Color.royalBlue)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Connect Enterprise Brain")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.textPrimary)
+                    Text("Add your Brain URL and pb_live_ key to approve memories.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textSecondary)
+            }
+            .padding(14)
+            .background(Color.royalBlue.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 24)
+    }
+
     // MARK: - Chat Stream
 
     private var chatStream: some View {
@@ -242,11 +336,15 @@ struct HomeChatView: View {
             ScrollView(showsIndicators: false) {
                 LazyVStack(spacing: 18) {
                     ForEach(chatVM.messages) { message in
-                        MessageBubble(message: message) {
-                            withAnimation(.snappy(duration: 0.3)) {
-                                chatVM.toggleBriefingExpansion(for: message.id)
-                            }
-                        }
+                        MessageBubble(
+                            message: message,
+                            onBriefingTap: {
+                                withAnimation(.snappy(duration: 0.3)) {
+                                    chatVM.toggleBriefingExpansion(for: message.id)
+                                }
+                            },
+                            onTypingProgress: { scrollAnchor = UUID() }
+                        )
                         .id(message.id)
                     }
 
@@ -306,11 +404,16 @@ struct HomeChatView: View {
                 .frame(width: 8, height: 8)
                 .opacity(isListening ? 1 : 0.3)
 
-            Text(partialTranscript)
-                .font(.caption)
-                .foregroundStyle(Color.textSecondary)
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(listeningSourceLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.royalBlue)
+                Text(partialTranscript.isEmpty ? "Listening…" : partialTranscript)
+                    .font(.caption)
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, Metrics.screenPadding + 8)
         .padding(.vertical, 6)
@@ -330,7 +433,15 @@ struct HomeChatView: View {
 
     private func startListening() {
         Task {
-            let granted = await audioEngine.requestPermissions()
+            let source: AudioSource = bluetooth.state.isLive ? .hardwareBLE : .internalMic
+            listeningSourceLabel = source == .hardwareBLE ? "Penlo wearable" : "iPhone mic"
+
+            let granted: Bool
+            if source == .hardwareBLE {
+                granted = await audioEngine.requestSpeechPermission()
+            } else {
+                granted = await audioEngine.requestPermissions()
+            }
             guard granted else {
                 showSettings = true
                 return
@@ -350,7 +461,7 @@ struct HomeChatView: View {
                 isListening = true
                 partialTranscript = ""
             }
-            audioEngine.startTranscribing()
+            audioEngine.startTranscribing(source: source)
             Haptics.success()
         }
     }
@@ -361,6 +472,7 @@ struct HomeChatView: View {
             isListening = false
             partialTranscript = ""
         }
+        appStateManager?.clearFault()
         Haptics.light()
     }
 

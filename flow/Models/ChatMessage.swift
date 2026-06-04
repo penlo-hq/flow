@@ -18,6 +18,8 @@ struct ChatMessage: Identifiable {
     var briefing: Briefing?
     var isBriefingExpanded: Bool
     var isError: Bool
+    /// When true, Penlo answers animate in with a typewriter effect (new messages only).
+    var shouldAnimateTyping: Bool
 
     enum Role {
         case user
@@ -32,7 +34,8 @@ struct ChatMessage: Identifiable {
         nodes: [ExtractedNode] = [],
         briefing: Briefing? = nil,
         isBriefingExpanded: Bool = false,
-        isError: Bool = false
+        isError: Bool = false,
+        shouldAnimateTyping: Bool = true
     ) {
         self.role = role
         self.text = text
@@ -41,6 +44,7 @@ struct ChatMessage: Identifiable {
         self.briefing = briefing
         self.isBriefingExpanded = isBriefingExpanded
         self.isError = isError
+        self.shouldAnimateTyping = shouldAnimateTyping
     }
 
     var formattedTime: String {

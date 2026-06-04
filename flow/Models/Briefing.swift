@@ -20,6 +20,13 @@ struct Briefing {
     var countdownLabel: String {
         "Meeting in \(minutesUntil)m"
     }
+
+    /// One-line summary for notification body cache.
+    var summaryLine: String {
+        if let first = peopleContext.first, !first.isEmpty { return first }
+        if let first = relevantDecisions.first, !first.isEmpty { return first }
+        return meetingTitle
+    }
 }
 
 // MARK: - Sample Data

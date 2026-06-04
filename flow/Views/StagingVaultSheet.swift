@@ -38,13 +38,13 @@ struct StagingVaultSheet: View {
                     blockList
                 }
             }
-            .background(Color.penloBlack.ignoresSafeArea())
+            .background(Color.canvas.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("Review Memories")
                         .font(.headline.weight(.bold))
-                        .foregroundStyle(Color.penloWhite)
+                        .foregroundStyle(Color.textPrimary)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button { dismiss() } label: {
@@ -54,11 +54,16 @@ struct StagingVaultSheet: View {
                     }
                 }
             }
-            .toolbarBackground(Color.penloBlack, for: .navigationBar)
+            .toolbarBackground(Color.canvas, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
-        .preferredColorScheme(.dark)
-        .onAppear { purgeExpired() }
+        
+        .onAppear {
+            purgeExpired()
+            if expandedID == nil, let first = blocks.first {
+                expandedID = first.id
+            }
+        }
         .alert("Sync Failed", isPresented: Binding(
             get: { syncError != nil },
             set: { if !$0 { syncError = nil } }
@@ -80,6 +85,19 @@ struct StagingVaultSheet: View {
 
     private var headerExplanation: some View {
         VStack(spacing: 16) {
+            if !brainSyncer.isConfigured {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "link.badge.plus")
+                        .foregroundStyle(Color.royalBlue)
+                    Text("Set Enterprise Brain URL and your pb_live_ API key in Settings before approving.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textSecondary)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.royalBlue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+            }
+
             HStack(spacing: 12) {
                 Image(systemName: "shield.lefthalf.filled")
                     .font(.title3)
@@ -88,7 +106,7 @@ struct StagingVaultSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(blocks.count) captured \(blocks.count == 1 ? "conversation" : "conversations")")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.penloWhite)
+                        .foregroundStyle(Color.textPrimary)
                     Text("Review what Penlo heard. Approve to keep, swipe to discard.")
                         .font(.caption)
                         .foregroundStyle(Color.textSecondary)
@@ -113,7 +131,7 @@ struct StagingVaultSheet: View {
                                 .font(.subheadline.weight(.semibold))
                         }
                     }
-                    .foregroundStyle(Color.penloWhite)
+                    .foregroundStyle(Color.textPrimary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
                     .background(
@@ -127,7 +145,7 @@ struct StagingVaultSheet: View {
         }
         .padding(.horizontal, Metrics.screenPadding)
         .padding(.vertical, 16)
-        .background(Color.penloBlack)
+        .background(Color.canvas)
     }
 
     // MARK: - Block List
@@ -187,7 +205,7 @@ struct StagingVaultSheet: View {
                 .foregroundStyle(Color.royalBlue.opacity(0.6))
             Text("All Caught Up")
                 .font(.title3.weight(.bold))
-                .foregroundStyle(Color.penloWhite)
+                .foregroundStyle(Color.textPrimary)
             Text("No conversations waiting for review.\nNew captures will appear here.")
                 .font(.subheadline)
                 .foregroundStyle(Color.textSecondary)

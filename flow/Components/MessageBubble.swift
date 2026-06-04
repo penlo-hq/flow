@@ -15,6 +15,9 @@ import SwiftUI
 struct MessageBubble: View {
     let message: ChatMessage
     var onBriefingTap: (() -> Void)? = nil
+    var onTypingProgress: (() -> Void)? = nil
+
+    @State private var typingComplete = false
 
     var body: some View {
         HStack {
@@ -23,7 +26,7 @@ struct MessageBubble: View {
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 8) {
                 bubbleContent
 
-                if !message.nodes.isEmpty {
+                if typingComplete && !message.nodes.isEmpty {
                     inlineChips
                 }
 
@@ -37,6 +40,14 @@ struct MessageBubble: View {
             }
 
             if message.role != .user { Spacer(minLength: 60) }
+        }
+        .onAppear {
+            if message.role != .penlo || message.isError || !message.shouldAnimateTyping {
+                typingComplete = true
+            }
+        }
+        .onChange(of: message.id) { _, _ in
+            typingComplete = message.role != .penlo || message.isError || !message.shouldAnimateTyping
         }
     }
 
@@ -73,8 +84,17 @@ struct MessageBubble: View {
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .strokeBorder(Color.orange.opacity(0.2), lineWidth: 0.5)
                         )
+                } else if message.shouldAnimateTyping {
+                    TypingRichTextView(
+                        text: message.text,
+                        isUser: false,
+                        enabled: true,
+                        onProgress: onTypingProgress,
+                        onComplete: { typingComplete = true }
+                    )
                 } else {
                     RichTextView(text: message.text, isUser: false)
+                        .onAppear { typingComplete = true }
                 }
             }
             .padding(.horizontal, 4)

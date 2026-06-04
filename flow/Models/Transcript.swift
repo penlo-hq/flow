@@ -21,6 +21,9 @@ final class Transcript {
 
     var isSynced: Bool
 
+    /// Labeled sample created during onboarding only (not real capture).
+    var isOnboardingSample: Bool = false
+
     /// JSON-encoded Pydantic v1.1 extraction payload (facts, people, topics).
     /// Decoded on-demand via the `payload` computed property.
     var payloadData: Data?
@@ -30,12 +33,14 @@ final class Transcript {
         rawText: String,
         capturedAt: Date = .now,
         isSynced: Bool = false,
+        isOnboardingSample: Bool = false,
         payloadData: Data? = nil
     ) {
         self.id = id
         self.rawText = rawText
         self.capturedAt = capturedAt
         self.isSynced = isSynced
+        self.isOnboardingSample = isOnboardingSample
         self.payloadData = payloadData
     }
 
@@ -61,7 +66,10 @@ final class Transcript {
     // MARK: - Display Helpers
 
     var displayTitle: String {
-        payload?.title ?? String(rawText.prefix(60))
+        if isOnboardingSample {
+            return "Sample — onboarding"
+        }
+        return payload?.title ?? String(rawText.prefix(60))
     }
 
     var relativeTimeLabel: String {

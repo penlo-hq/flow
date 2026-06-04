@@ -2,6 +2,17 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.getflow.flow</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>penlo</string>
+			</array>
+		</dict>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
@@ -16,6 +27,8 @@
 	<string>Penlo uses the microphone to listen and transcribe your conversations so it can extract key facts, people, and decisions for your knowledge graph.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Penlo uses on-device speech recognition to convert your spoken words into text efficiently without sending audio to the cloud.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Penlo connects to your Enterprise Brain on your Wi‑Fi network to sync memories.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

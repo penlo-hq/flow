@@ -236,6 +236,7 @@ final class EnterpriseBrainSyncer {
             updateLastSyncDate(Date())
             authError = nil
             log("Synced \(transcript.id.uuidString.prefix(8))")
+            await BrainGraphService.shared.refresh()
         } else {
             handleSyncError(result, transcriptID: transcript.id)
             if result.shouldRetry {
@@ -268,7 +269,8 @@ final class EnterpriseBrainSyncer {
             "topicSummary": [],
             "vaultFiles": [],
         ]
-        return await syncWithBackoff(payloadDict: payload)
+        // Single attempt — no backoff — so onboarding feedback is immediate.
+        return await performSync(payloadDict: payload, timeout: 8)
     }
 
     // MARK: - Queue Drain
@@ -307,6 +309,7 @@ final class EnterpriseBrainSyncer {
                 updateLastSyncDate(Date())
                 authError = nil
                 drained += 1
+                await BrainGraphService.shared.refresh()
             } else {
                 handleSyncError(result, transcriptID: item.transcriptID)
                 if !result.shouldRetry {
@@ -360,7 +363,7 @@ final class EnterpriseBrainSyncer {
         }
     }
 
-    private nonisolated func performSync(payloadDict: [String: Any]) async -> SyncResult {
+    private nonisolated func performSync(payloadDict: [String: Any], timeout: TimeInterval? = nil) async -> SyncResult {
         guard let urlString = KeychainStore.readBrainURL(),
               let url = Self.normalizedBrainURL(urlString),
               let apiKey = KeychainStore.readBrainKey()?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -375,7 +378,7 @@ final class EnterpriseBrainSyncer {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = Self.httpTimeout
+        request.timeoutInterval = timeout ?? Self.httpTimeout
 
         guard let body = try? JSONSerialization.data(withJSONObject: sanitized) else {
             return SyncResult(ok: false, status: .networkError, detail: "Failed to serialize payload")
@@ -459,8 +462,14 @@ final class EnterpriseBrainSyncer {
         switch result.status {
         case .authFailed:
             authError = "Enterprise Brain API key is invalid. Please update in Settings."
+            Task { @MainActor in
+                NotificationManager.shared.notifyAuthExpired()
+            }
         case .clientError, .validationError:
             logToFile("PERMANENT FAIL [\(result.status.rawValue)] transcript=\(transcriptID.uuidString.prefix(8)): \(result.detail)")
+            Task { @MainActor in
+                NotificationManager.shared.notifySyncFailed(detail: result.detail)
+            }
         case .serverError, .rateLimited, .networkError:
             logToFile("RETRYABLE [\(result.status.rawValue)] transcript=\(transcriptID.uuidString.prefix(8)): \(result.detail)")
         default:

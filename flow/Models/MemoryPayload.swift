@@ -268,15 +268,17 @@ struct MemoryPayload: Equatable, Sendable {
     /// Convert to PenloPayload for Enterprise Brain sync.
     /// syncedAt will be overridden at actual POST time by EnterpriseBrainSyncer.
     func toPenloPayload(userEmail: String? = nil) -> PenloPayload {
-        PenloPayload(
+        let email = userEmail ?? KeychainStore.readUserEmail()
+        let vaultFiles = PenloVaultFileBuilder.build(from: self, userEmail: email)
+        return PenloPayload(
             schemaVersion: schemaVersion,
             deviceID: PenloDevice.identifier,
-            userEmail: userEmail,
+            userEmail: email,
             syncedAt: PenloTimestamp.now(),
             facts: facts,
             people: people,
             topicSummary: topicSummary,
-            vaultFiles: []
+            vaultFiles: vaultFiles
         )
     }
 }

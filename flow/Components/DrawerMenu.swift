@@ -12,12 +12,28 @@ import SwiftUI
 struct DrawerMenu: View {
     @ObservedObject var bluetooth: BluetoothManager
     var chatVM: ChatViewModel
+    @Bindable var graphService: BrainGraphService
     let onFolderTap: (VaultFolder) -> Void
+    let onAllCategoriesTap: () -> Void
     let onSettingsTap: () -> Void
     let onNewChat: () -> Void
     let onConversationTap: (ArchivedConversation) -> Void
     let onDispatchTap: () -> Void
     let dispatchBadge: Int   // pending dispatch count; 0 hides the badge
+
+    // Stored credential name — falls back to "Penlo User" if not set
+    @AppStorage("userName") private var storedUserName: String = ""
+    @AppStorage("userEmail") private var storedUserEmail: String = ""
+
+    private var displayName: String {
+        let name = storedUserName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "Penlo User" : name
+    }
+
+    private var displayEmail: String {
+        let email = storedUserEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        return email.isEmpty ? bluetooth.state.label : email
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -46,6 +62,16 @@ struct DrawerMenu: View {
         .frame(width: Metrics.drawerWidth)
         .frame(maxHeight: .infinity)
         .background(Color.surface)
+        .onAppear {
+            syncProfileFromKeychain()
+            Task { await graphService.refresh() }
+        }
+    }
+
+    private func syncProfileFromKeychain() {
+        if let email = KeychainStore.readUserEmail(), !email.isEmpty {
+            storedUserEmail = email
+        }
     }
 
     // MARK: Profile Card
@@ -63,12 +89,13 @@ struct DrawerMenu: View {
                     )
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Penlo User")
+                    Text(displayName)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.textPrimary)
-                    Text(bluetooth.state.label)
+                    Text(displayEmail)
                         .font(.caption)
                         .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
                 }
             }
 
@@ -219,6 +246,18 @@ struct DrawerMenu: View {
                             .font(.body)
                             .foregroundStyle(Color.textPrimary)
                         Spacer()
+                        if graphService.isConfigured {
+                            let count = graphService.count(for: folder.nodeType)
+                            if count > 0 {
+                                Text("\(min(count, 99))")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(Color.royalBlue)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(Color.royalBlue.opacity(0.12))
+                                    .clipShape(Capsule())
+                            }
+                        }
                     }
                     .padding(.horizontal, Metrics.screenPadding)
                     .padding(.vertical, 10)
@@ -226,6 +265,26 @@ struct DrawerMenu: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            Button {
+                Haptics.light()
+                onAllCategoriesTap()
+            } label: {
+                HStack(spacing: 14) {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.body)
+                        .foregroundStyle(Color.royalBlue)
+                        .frame(width: 22)
+                    Text("All Categories")
+                        .font(.body)
+                        .foregroundStyle(Color.textPrimary)
+                    Spacer()
+                }
+                .padding(.horizontal, Metrics.screenPadding)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -254,7 +313,7 @@ struct DrawerMenu: View {
 // MARK: - Vault Folder
 
 enum VaultFolder: String, CaseIterable, Identifiable {
-    case people, topics, tasks, decisions, features, clients
+    case people, topics, tasks, decisions, features, clients, events
 
     var id: String { rawValue }
 
@@ -270,6 +329,7 @@ enum VaultFolder: String, CaseIterable, Identifiable {
         case .decisions: return "arrow.triangle.branch"
         case .features:  return "sparkles"
         case .clients:   return "building.2"
+        case .events:    return "calendar"
         }
     }
 }
@@ -279,7 +339,9 @@ enum VaultFolder: String, CaseIterable, Identifiable {
         DrawerMenu(
             bluetooth: BluetoothManager(),
             chatVM: ChatViewModel(),
+            graphService: BrainGraphService.shared,
             onFolderTap: { _ in },
+            onAllCategoriesTap: {},
             onSettingsTap: {},
             onNewChat: {},
             onConversationTap: { _ in },

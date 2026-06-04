@@ -4,11 +4,6 @@
 //
 //  A single captured conversation in the Privacy Review.
 //
-//  Collapsed: title + relative time, one-line summary, first 1-2 facts
-//  as natural sentences, confidence indicator dot.
-//  Expanded: "What will be synced" section with facts/people/topics,
-//  collapsible raw transcript, clear footer, and approve/discard actions.
-//
 
 import SwiftUI
 
@@ -25,8 +20,12 @@ struct MemoryBlockCard: View {
 
     private var payload: MemoryPayload {
         transcript.payload ?? MemoryPayload(
-            title: String(transcript.rawText.prefix(60))
+            title: transcript.displayTitle
         )
+    }
+
+    private var hasStructuredContent: Bool {
+        !payload.facts.isEmpty || !payload.people.isEmpty || !payload.topicSummary.isEmpty
     }
 
     var body: some View {
@@ -37,15 +36,20 @@ struct MemoryBlockCard: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.penloWhite.opacity(0.04))
+                .fill(Color.surface)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(
-                    isExpanded ? Color.royalBlue.opacity(0.3) : Color.penloWhite.opacity(0.06),
+                    isExpanded ? Color.royalBlue.opacity(0.35) : Color.textPrimary.opacity(0.08),
                     lineWidth: 1
                 )
         )
+        .onChange(of: isExpanded) { _, expanded in
+            if expanded && !hasStructuredContent && !transcript.rawText.isEmpty {
+                showRawTranscript = true
+            }
+        }
     }
 
     // MARK: - Card Header (Collapsed State)
@@ -58,7 +62,7 @@ struct MemoryBlockCard: View {
                 HStack(alignment: .top) {
                     Text(payload.title)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(Color.penloWhite)
+                        .foregroundStyle(Color.textPrimary)
                         .lineLimit(isExpanded ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -97,14 +101,19 @@ struct MemoryBlockCard: View {
             if let firstFact = payload.facts.first {
                 Text(firstFact.displayText)
                     .font(.subheadline)
-                    .foregroundStyle(Color.penloWhite.opacity(0.75))
+                    .foregroundStyle(Color.textPrimary)
                     .lineLimit(2)
+            } else if !transcript.rawText.isEmpty {
+                Text(transcript.rawText)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(3)
             }
 
             if payload.facts.count > 1 {
                 Text(payload.facts[1].displayText)
                     .font(.subheadline)
-                    .foregroundStyle(Color.penloWhite.opacity(0.6))
+                    .foregroundStyle(Color.textSecondary)
                     .lineLimit(1)
             }
         }
@@ -121,7 +130,10 @@ struct MemoryBlockCard: View {
         if !payload.topicSummary.isEmpty {
             parts.append("\(payload.topicSummary.count) topic\(payload.topicSummary.count == 1 ? "" : "s")")
         }
-        return parts.joined(separator: ", ")
+        if parts.isEmpty, !transcript.rawText.isEmpty {
+            return "Transcript captured"
+        }
+        return parts.isEmpty ? "No extracted details yet" : parts.joined(separator: ", ")
     }
 
     private var averageConfidence: Float {
@@ -148,19 +160,25 @@ struct MemoryBlockCard: View {
 
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Divider().overlay(Color.penloWhite.opacity(0.06))
+            Divider().overlay(Color.textPrimary.opacity(0.08))
                 .padding(.top, 12)
 
-            syncSectionHeader
+            if !transcript.rawText.isEmpty {
+                conversationSection
+            }
 
-            if !payload.facts.isEmpty {
-                factsSection
-            }
-            if !payload.people.isEmpty {
-                peopleSection
-            }
-            if !payload.topicSummary.isEmpty {
-                topicsSection
+            if hasStructuredContent {
+                syncSectionHeader
+
+                if !payload.facts.isEmpty {
+                    factsSection
+                }
+                if !payload.people.isEmpty {
+                    peopleSection
+                }
+                if !payload.topicSummary.isEmpty {
+                    topicsSection
+                }
             }
 
             rawTranscriptSection
@@ -171,6 +189,30 @@ struct MemoryBlockCard: View {
         .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
     }
 
+    private var conversationSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "text.quote")
+                    .font(.caption2)
+                    .foregroundStyle(Color.royalBlue)
+                Text("What Penlo heard")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textSecondary)
+            }
+
+            Text(transcript.rawText)
+                .font(.subheadline)
+                .foregroundStyle(Color.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.textPrimary.opacity(0.04))
+                )
+        }
+    }
+
     private var syncSectionHeader: some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.up.circle.fill")
@@ -178,7 +220,7 @@ struct MemoryBlockCard: View {
                 .foregroundStyle(Color.royalBlue)
             Text("What will be synced")
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(Color.penloWhite)
+                .foregroundStyle(Color.textPrimary)
         }
     }
 
@@ -200,7 +242,7 @@ struct MemoryBlockCard: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(fact.displayText)
                             .font(.subheadline)
-                            .foregroundStyle(Color.penloWhite.opacity(0.85))
+                            .foregroundStyle(Color.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)
 
                         confidenceBadge(for: fact.confidence)
@@ -213,7 +255,7 @@ struct MemoryBlockCard: View {
                     } label: {
                         Image(systemName: "minus.circle.fill")
                             .font(.system(size: 16))
-                            .foregroundStyle(Color.textSecondary.opacity(0.35))
+                            .foregroundStyle(Color.textSecondary.opacity(0.5))
                     }
                     .buttonStyle(.plain)
                 }
@@ -252,7 +294,7 @@ struct MemoryBlockCard: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(person.name)
                             .font(.subheadline.weight(.medium))
-                            .foregroundStyle(Color.penloWhite.opacity(0.85))
+                            .foregroundStyle(Color.textPrimary)
 
                         if let notes = person.notes, !notes.isEmpty {
                             Text(notes)
@@ -268,7 +310,7 @@ struct MemoryBlockCard: View {
                     } label: {
                         Image(systemName: "minus.circle.fill")
                             .font(.system(size: 16))
-                            .foregroundStyle(Color.textSecondary.opacity(0.35))
+                            .foregroundStyle(Color.textSecondary.opacity(0.5))
                     }
                     .buttonStyle(.plain)
                 }
@@ -317,37 +359,41 @@ struct MemoryBlockCard: View {
     // MARK: - Raw Transcript (Collapsible)
 
     private var rawTranscriptSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                    showRawTranscript.toggle()
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "doc.text")
-                        .font(.caption2)
-                        .foregroundStyle(Color.textSecondary)
-                    Text("Raw transcript")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.textSecondary)
-                    Image(systemName: showRawTranscript ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(Color.textSecondary.opacity(0.6))
-                }
-            }
-            .buttonStyle(.plain)
+        Group {
+            if !transcript.rawText.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                            showRawTranscript.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "doc.text")
+                                .font(.caption2)
+                                .foregroundStyle(Color.textSecondary)
+                            Text("Full transcript")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(Color.textSecondary)
+                            Image(systemName: showRawTranscript ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(Color.textSecondary.opacity(0.6))
+                        }
+                    }
+                    .buttonStyle(.plain)
 
-            if showRawTranscript {
-                Text(transcript.rawText)
-                    .font(.caption)
-                    .foregroundStyle(Color.textSecondary.opacity(0.7))
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.penloWhite.opacity(0.03))
-                    )
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    if showRawTranscript {
+                        Text(transcript.rawText)
+                            .font(.caption)
+                            .foregroundStyle(Color.textPrimary)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.textPrimary.opacity(0.04))
+                            )
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
             }
         }
     }
@@ -358,10 +404,10 @@ struct MemoryBlockCard: View {
         HStack(spacing: 6) {
             Image(systemName: "info.circle")
                 .font(.caption2)
-                .foregroundStyle(Color.textSecondary.opacity(0.6))
+                .foregroundStyle(Color.textSecondary.opacity(0.8))
             Text("This will be sent to your Enterprise Brain")
                 .font(.caption2)
-                .foregroundStyle(Color.textSecondary.opacity(0.6))
+                .foregroundStyle(Color.textSecondary)
         }
     }
 
@@ -379,7 +425,7 @@ struct MemoryBlockCard: View {
                     Text("Discard")
                         .font(.subheadline.weight(.semibold))
                 }
-                .foregroundStyle(.red.opacity(0.8))
+                .foregroundStyle(.red.opacity(0.85))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
                 .background(
@@ -411,7 +457,7 @@ struct MemoryBlockCard: View {
                             .font(.subheadline.weight(.bold))
                     }
                 }
-                .foregroundStyle(Color.penloWhite)
+                .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
                 .background(
@@ -437,11 +483,14 @@ struct MemoryBlockCard: View {
         topicSummary: ["Q3 Roadmap", "BLE Reliability"]
     )
     ZStack {
-        Color.penloBlack.ignoresSafeArea()
+        Color.canvas.ignoresSafeArea()
         VStack(spacing: 20) {
             MemoryBlockCard(
                 transcript: {
-                    let t = Transcript(rawText: "Reviewed the Q3 roadmap and aligned on shipping Enterprise Sync before the offsite. BLE pairing has reliability issues on v2.1 firmware.", payloadData: try? JSONEncoder().encode(payload))
+                    let t = Transcript(
+                        rawText: "Reviewed the Q3 roadmap and aligned on shipping Enterprise Sync before the offsite. BLE pairing has reliability issues on v2.1 firmware.",
+                        payloadData: try? JSONEncoder().encode(payload)
+                    )
                     return t
                 }(),
                 isExpanded: false,
@@ -452,7 +501,10 @@ struct MemoryBlockCard: View {
             )
             MemoryBlockCard(
                 transcript: {
-                    let t = Transcript(rawText: "Reviewed the Q3 roadmap and aligned on shipping Enterprise Sync before the offsite. BLE pairing has reliability issues on v2.1 firmware.", payloadData: try? JSONEncoder().encode(payload))
+                    let t = Transcript(
+                        rawText: "Reviewed the Q3 roadmap and aligned on shipping Enterprise Sync before the offsite. BLE pairing has reliability issues on v2.1 firmware.",
+                        payloadData: try? JSONEncoder().encode(payload)
+                    )
                     return t
                 }(),
                 isExpanded: true,
