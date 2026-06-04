@@ -145,9 +145,11 @@ final class OnboardingCoordinator {
             }
         )
         if let urlValue = items["url"] ?? items["brain_url"] {
+            guard urlValue.hasPrefix("https://") else { return }
             KeychainStore.saveBrainURL(urlValue)
         }
         if let key = items["key"] ?? items["brain_key"] {
+            guard key.hasPrefix("pb_live_") else { return }
             KeychainStore.saveBrainKey(key)
         }
         if let email = items["email"] {
